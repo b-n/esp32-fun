@@ -14,7 +14,7 @@ use crate::irq::InterruptHandler;
 const SAMPLES: usize = 5;
 
 // Help manage multiple inputs using interrupts that are debounced.
-pub struct InputManager<'d, T: InputPin, E: EspEventLoopType> {
+pub struct InputManager<'d, T: Pin, E: EspEventLoopType> {
     inputs: HashMap<i32, Input<'d, T>>,
     irq_handler: InterruptHandler<'d>,
     event_loop: Option<EspEventLoop<E>>,
@@ -22,7 +22,7 @@ pub struct InputManager<'d, T: InputPin, E: EspEventLoopType> {
 
 impl<'d, T, E> InputManager<'d, T, E>
 where
-    T: InputPin + OutputPin + Pin,
+    T: Pin,
     E: EspEventLoopType,
 {
     // Generate a new input manager
@@ -51,7 +51,10 @@ where
         pin: impl Peripheral<P = T> + 'd,
         mode: InputMode,
         with_interrupts: bool,
-    ) -> Result<(), EspError> {
+    ) -> Result<(), EspError>
+    where
+        T: InputPin + OutputPin,
+    {
         let mut input = Input::new(pin, mode)?;
         if with_interrupts {
             input = input.with_interrupts(&mut self.irq_handler)?
@@ -67,7 +70,10 @@ where
         &mut self,
         pin: impl Peripheral<P = T> + 'd,
         with_interrupts: bool,
-    ) -> Result<(), EspError> {
+    ) -> Result<(), EspError>
+    where
+        T: InputPin + OutputPin,
+    {
         self.register_input(pin, InputMode::Switch, with_interrupts)
     }
 
@@ -78,7 +84,10 @@ where
         &mut self,
         pin: impl Peripheral<P = T> + 'd,
         with_interrupts: bool,
-    ) -> Result<(), EspError> {
+    ) -> Result<(), EspError>
+    where
+        T: InputPin + OutputPin,
+    {
         self.register_input(pin, InputMode::Button, with_interrupts)
     }
 
@@ -119,7 +128,7 @@ pub enum InputMode {
     Button,
 }
 
-pub struct Input<'d, T: InputPin> {
+pub struct Input<'d, T: Pin> {
     pub state: Level,
     switch: PinDriver<'d, T, MODE_Input>,
     pub pin: i32,
@@ -131,10 +140,13 @@ pub struct Input<'d, T: InputPin> {
 
 impl<'d, T> Input<'d, T>
 where
-    T: InputPin + OutputPin,
+    T: Pin,
 {
     // Generate a new input
-    pub fn new(pin: impl Peripheral<P = T> + 'd, mode: InputMode) -> Result<Self, EspError> {
+    pub fn new(pin: impl Peripheral<P = T> + 'd, mode: InputMode) -> Result<Self, EspError>
+    where
+        T: InputPin + OutputPin,
+    {
         let mut switch = PinDriver::input(pin)?;
         switch.set_pull(Pull::Up)?;
         let pin = switch.pin();
