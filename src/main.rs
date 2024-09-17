@@ -17,7 +17,7 @@ mod inputs;
 mod irq;
 
 use display::{frame_timer, LedDisplay};
-use inputs::Inputs;
+use inputs::InputManager;
 
 // static NETWORK_SSID: &'static str = env!("NETWORK_SSID");
 // static NETWORK_PW: &'static str = env!("NETWORK_PW");
@@ -35,7 +35,7 @@ fn main() -> Result<(), EspError> {
     let peripherals = Peripherals::take()?;
 
     // Setup input handlers
-    let mut inputs = Inputs::new().with_event_loop(sys_loop.clone());
+    let mut inputs = InputManager::new().with_event_loop(sys_loop.clone());
     inputs.new_switch(peripherals.pins.gpio1, true)?;
 
     // Check the inputs via a timer circuit

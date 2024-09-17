@@ -13,17 +13,21 @@ use crate::irq::InterruptHandler;
 
 const SAMPLES: usize = 5;
 
-pub struct Inputs<'d, T: InputPin, E: EspEventLoopType> {
+// Help manage multiple inputs using interrupts that are debounced.
+pub struct InputManager<'d, T: InputPin, E: EspEventLoopType> {
     inputs: HashMap<i32, Input<'d, T>>,
     irq_handler: InterruptHandler<'d>,
     event_loop: Option<EspEventLoop<E>>,
 }
 
-impl<'d, T, E> Inputs<'d, T, E>
+impl<'d, T, E> InputManager<'d, T, E>
 where
     T: InputPin + OutputPin + Pin,
     E: EspEventLoopType,
 {
+    // Generate a new input manager
+    //
+    // Note: see `with_event_loop` to connect the manager to an event loop
     pub fn new() -> Self {
         Self {
             inputs: HashMap::with_capacity(32),
@@ -32,14 +36,17 @@ where
         }
     }
 
-    #[allow(dead_code)]
+    // Connect the input manager to an event loop to publish input events
+    //
+    // Note: This function needs to be called since the only way to get events
+    // is via the usage of an event loop (at present).
     pub fn with_event_loop(mut self, event_loop: EspEventLoop<E>) -> Self {
         self.event_loop = Some(event_loop);
         self
     }
 
-    // Warning: this function will overwrite any existing input with the same pin
-    pub fn register_input(
+    // Register an input with the input manager
+    fn register_input(
         &mut self,
         pin: impl Peripheral<P = T> + 'd,
         mode: InputMode,
@@ -54,6 +61,7 @@ where
         Ok(())
     }
 
+    // Helper function to register a switch type input
     #[allow(dead_code)]
     pub fn new_switch(
         &mut self,
@@ -63,6 +71,8 @@ where
         self.register_input(pin, InputMode::Switch, with_interrupts)
     }
 
+    // Helper function to register a button input
+    // TODO: Support "Click" and "Double Click" events
     #[allow(dead_code)]
     pub fn new_button(
         &mut self,
@@ -72,7 +82,9 @@ where
         self.register_input(pin, InputMode::Button, with_interrupts)
     }
 
+    // Evalute the state of all inputs
     pub fn eval(&mut self) {
+        // Check the interrupt queue first and handle any messages
         while let Some(p) = self.irq_handler.dequeue() {
             if self.inputs.contains_key(&p) {
                 self.inputs.get_mut(&p).unwrap().handle_interrupt().unwrap();
@@ -81,14 +93,14 @@ where
             }
         }
 
-        for (_, switch) in self.inputs.iter_mut() {
-            let pin = switch.pin;
-            if let Some(event) = switch.tick() {
-                if let Some(event_loop) = &self.event_loop {
-                    event_loop
-                        .post::<Event>(&((pin, event).into()), delay::BLOCK)
-                        .unwrap();
-                }
+        // For each input,
+        for (_, input) in self.inputs.iter_mut() {
+            let pin = input.pin;
+            // if there is an input event and an event loop, post the event to the loop
+            if let (Some(event), Some(event_loop)) = (input.tick(), &self.event_loop) {
+                event_loop
+                    .post::<Event>(&((pin, event).into()), delay::BLOCK)
+                    .unwrap();
             }
         }
     }
@@ -121,6 +133,7 @@ impl<'d, T> Input<'d, T>
 where
     T: InputPin + OutputPin,
 {
+    // Generate a new input
     pub fn new(pin: impl Peripheral<P = T> + 'd, mode: InputMode) -> Result<Self, EspError> {
         let mut switch = PinDriver::input(pin)?;
         switch.set_pull(Pull::Up)?;
@@ -136,6 +149,9 @@ where
         })
     }
 
+    // Register an interrupt handler for the input
+    //
+    // Note: this function is required at present since polling is not supported (yet)
     pub fn with_interrupts(mut self, handler: &mut InterruptHandler) -> Result<Self, EspError> {
         self.has_interrupts = true;
         self.switch.set_interrupt_type(InterruptType::AnyEdge)?;
@@ -144,18 +160,26 @@ where
         Ok(self)
     }
 
-    pub fn handle_interrupt(&mut self) -> Result<(), EspError> {
+    fn handle_interrupt(&mut self) -> Result<(), EspError> {
         if !self.has_interrupts {
             error!("Handling unregistered interrupt");
             return Ok(());
         }
+        // if we have an interrupt, we need to check the state of the input
         self.dirty = true;
         self.switch.enable_interrupt()
     }
 
-    /// Returns None when nothing has changed
-    /// Returns an InputEvent based on the new state if it was changed
-    pub fn tick(&mut self) -> Option<InputEvent> {
+    // Evalute the state of the input, returning an input event if applicable.
+    //
+    // The state of the switch is debounced by taking a series of samples until
+    // the window of samples are all the same value. The state is determined by
+    // the final value of all samples combined (they need to be unanimous).
+    //
+    // Returns:
+    // - None when nothing has changed
+    // - Some(InputEvent) based on the new state if it was changed
+    fn tick(&mut self) -> Option<InputEvent> {
         if !self.dirty {
             return None;
         }
