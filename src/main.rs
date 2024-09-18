@@ -3,7 +3,7 @@
 use core::pin::pin;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
-    hal::{peripherals::Peripherals, task::block_on},
+    hal::{gpio::IOPin, peripherals::Peripherals, task::block_on},
     log::EspLogger,
     sys::{link_patches, EspError},
     timer::EspTaskTimerService,
@@ -36,9 +36,7 @@ fn main() -> Result<(), EspError> {
 
     // Setup input handlers
     let mut inputs = InputManager::new().with_event_loop(sys_loop.clone());
-    inputs.new_switch(peripherals.pins.gpio1, true)?;
-    // TODO: Uncommenting the below causes issues
-    //inputs.new_switch(peripherals.pins.gpio2, true)?;
+    inputs.new_switch(peripherals.pins.gpio1.downgrade(), true)?;
 
     // Check the inputs via a timer circuit
     let input_timer = {

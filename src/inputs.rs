@@ -1,8 +1,7 @@
 use esp_idf_svc::eventloop::{EspEventLoop, EspEventLoopType};
 use esp_idf_svc::hal::{
     delay,
-    gpio::{Input as MODE_Input, InputPin, InterruptType, Level, OutputPin, Pin, PinDriver, Pull},
-    peripheral::Peripheral,
+    gpio::{AnyIOPin, Input as MODE_Input, InterruptType, Level, PinDriver, Pull},
     sys::EspError,
 };
 use log::error;
@@ -14,15 +13,14 @@ use crate::irq::InterruptHandler;
 const SAMPLES: usize = 5;
 
 // Help manage multiple inputs using interrupts that are debounced.
-pub struct InputManager<'d, T: Pin, E: EspEventLoopType> {
-    inputs: HashMap<i32, Input<'d, T>>,
+pub struct InputManager<'d, E: EspEventLoopType> {
+    inputs: HashMap<i32, Input<'d>>,
     irq_handler: InterruptHandler<'d>,
     event_loop: Option<EspEventLoop<E>>,
 }
 
-impl<'d, T, E> InputManager<'d, T, E>
+impl<'d, E> InputManager<'d, E>
 where
-    T: Pin,
     E: EspEventLoopType,
 {
     // Generate a new input manager
@@ -48,13 +46,10 @@ where
     // Register an input with the input manager
     fn register_input(
         &mut self,
-        pin: impl Peripheral<P = T> + 'd,
+        pin: AnyIOPin,
         mode: InputMode,
         with_interrupts: bool,
-    ) -> Result<(), EspError>
-    where
-        T: InputPin + OutputPin,
-    {
+    ) -> Result<(), EspError> {
         let mut input = Input::new(pin, mode)?;
         if with_interrupts {
             input = input.with_interrupts(&mut self.irq_handler)?
@@ -66,28 +61,14 @@ where
 
     // Helper function to register a switch type input
     #[allow(dead_code)]
-    pub fn new_switch(
-        &mut self,
-        pin: impl Peripheral<P = T> + 'd,
-        with_interrupts: bool,
-    ) -> Result<(), EspError>
-    where
-        T: InputPin + OutputPin,
-    {
+    pub fn new_switch(&mut self, pin: AnyIOPin, with_interrupts: bool) -> Result<(), EspError> {
         self.register_input(pin, InputMode::Switch, with_interrupts)
     }
 
     // Helper function to register a button input
     // TODO: Support "Click" and "Double Click" events
     #[allow(dead_code)]
-    pub fn new_button(
-        &mut self,
-        pin: impl Peripheral<P = T> + 'd,
-        with_interrupts: bool,
-    ) -> Result<(), EspError>
-    where
-        T: InputPin + OutputPin,
-    {
+    pub fn new_button(&mut self, pin: AnyIOPin, with_interrupts: bool) -> Result<(), EspError> {
         self.register_input(pin, InputMode::Button, with_interrupts)
     }
 
@@ -128,9 +109,9 @@ pub enum InputMode {
     Button,
 }
 
-pub struct Input<'d, T: Pin> {
+pub struct Input<'d> {
     pub state: Level,
-    switch: PinDriver<'d, T, MODE_Input>,
+    switch: PinDriver<'d, AnyIOPin, MODE_Input>,
     pub pin: i32,
     pub dirty: bool,
     states: [bool; SAMPLES],
@@ -138,15 +119,9 @@ pub struct Input<'d, T: Pin> {
     mode: InputMode,
 }
 
-impl<'d, T> Input<'d, T>
-where
-    T: Pin,
-{
+impl<'d> Input<'d> {
     // Generate a new input
-    pub fn new(pin: impl Peripheral<P = T> + 'd, mode: InputMode) -> Result<Self, EspError>
-    where
-        T: InputPin + OutputPin,
-    {
+    pub fn new(pin: AnyIOPin, mode: InputMode) -> Result<Self, EspError> {
         let mut switch = PinDriver::input(pin)?;
         switch.set_pull(Pull::Up)?;
         let pin = switch.pin();
