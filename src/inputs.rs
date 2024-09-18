@@ -10,7 +10,11 @@ use std::collections::HashMap;
 use crate::events::Event;
 use crate::irq::InterruptHandler;
 
-const SAMPLES: usize = 5;
+// This is the number of samples which is required to be uniform before an
+// input state is considered to have changed. The samples are taken once per
+// input tick which is usually on a ms duration loop. The faster the loop,
+// the more samples that will be needed
+const SAMPLES: usize = 3;
 
 // Help manage multiple inputs using interrupts that are debounced.
 pub struct InputManager<'d, E: EspEventLoopType> {
@@ -116,10 +120,10 @@ pub enum InputMode {
 
 pub struct Input<'d> {
     pub state: Level,
-    switch: PinDriver<'d, AnyIOPin, MODE_Input>,
+    input: PinDriver<'d, AnyIOPin, MODE_Input>,
     pub pin: i32,
     pub dirty: bool,
-    states: [bool; SAMPLES],
+    states: [Level; SAMPLES],
     has_interrupts: bool,
     mode: InputMode,
 }
@@ -127,15 +131,16 @@ pub struct Input<'d> {
 impl<'d> Input<'d> {
     // Generate a new input
     pub fn new(pin: AnyIOPin, mode: InputMode) -> Result<Self, EspError> {
-        let mut switch = PinDriver::input(pin)?;
-        switch.set_pull(Pull::Up)?;
-        let pin = switch.pin();
+        let mut input = PinDriver::input(pin)?;
+        input.set_pull(Pull::Up)?;
+        let pin = input.pin();
+        let state = input.get_level();
         Ok(Self {
-            state: switch.get_level(),
-            switch,
+            state,
+            input,
             pin,
             dirty: true,
-            states: [false; SAMPLES],
+            states: [state; SAMPLES],
             has_interrupts: false,
             mode,
         })
@@ -146,9 +151,9 @@ impl<'d> Input<'d> {
     // Note: this function is required at present since polling is not supported (yet)
     pub fn with_interrupts(mut self, handler: &mut InterruptHandler) -> Result<Self, EspError> {
         self.has_interrupts = true;
-        self.switch.set_interrupt_type(InterruptType::AnyEdge)?;
-        unsafe { self.switch.subscribe(handler.register(self.pin))? };
-        self.switch.enable_interrupt()?;
+        self.input.set_interrupt_type(InterruptType::AnyEdge)?;
+        unsafe { self.input.subscribe(handler.register(self.pin))? };
+        self.input.enable_interrupt()?;
         Ok(self)
     }
 
@@ -159,7 +164,7 @@ impl<'d> Input<'d> {
         }
         // if we have an interrupt, we need to check the state of the input
         self.dirty = true;
-        self.switch.enable_interrupt()
+        self.input.enable_interrupt()
     }
 
     // Evalute the state of the input, returning an input event if applicable.
@@ -178,10 +183,13 @@ impl<'d> Input<'d> {
 
         // Add a new measurement
         self.states.rotate_right(1);
-        self.states[0] = self.switch.get_level().into();
+        self.states[0] = self.input.get_level();
 
         // Count number of true's
-        let count = self.states.iter().fold(0, |acc, s| acc + (*s as usize));
+        let count = self
+            .states
+            .iter()
+            .fold(0, |acc, s| if s == &Level::High { acc + 1 } else { acc });
 
         // If the slice is saturated (either direction), then it's now stable
         if count == 0 || count == self.states.len() {
