@@ -1,6 +1,6 @@
 use heapless::spsc::{Consumer, Queue};
 
-const IRQ_CAPACITY: usize = 4;
+const IRQ_CAPACITY: usize = 8;
 
 type PinAddress = i32;
 

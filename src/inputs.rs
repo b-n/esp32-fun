@@ -4,7 +4,7 @@ use esp_idf_svc::hal::{
     gpio::{AnyIOPin, Input as MODE_Input, InterruptType, Level, PinDriver, Pull},
     sys::EspError,
 };
-use log::error;
+use log::{debug, error};
 use std::collections::HashMap;
 
 use crate::events::Event;
@@ -74,6 +74,7 @@ where
 
     // Evalute the state of all inputs
     pub fn eval(&mut self) {
+        let mut dequeued = 0;
         // Check the interrupt queue first and handle any messages
         while let Some(p) = self.irq_handler.dequeue() {
             if self.inputs.contains_key(&p) {
@@ -81,6 +82,10 @@ where
             } else {
                 error!("Unhandled interrupt on pin {}", p);
             }
+            dequeued += 1;
+        }
+        if dequeued > 0 {
+            debug!("Dequeued {} interrupts", dequeued);
         }
 
         // For each input,
