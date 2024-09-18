@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use crate::events::Event;
 use crate::irq::InterruptHandler;
 
-// This is the number of samples which is required to be uniform before an
-// input state is considered to have changed. The samples are taken once per
-// input tick which is usually on a ms duration loop. The faster the loop,
-// the more samples that will be needed
-const SAMPLES: usize = 3;
+// The number of samples to take when debouncing an input. When an input changes, an interrupt is
+// fired. That interrupt is then cleared and checked during the input loop. It is quite likely that
+// the input loop and the interrupt don't happen at the same time (e.g. all samples should be the
+// same), however this provides a gaurantee of signal stability.
+const SAMPLES: usize = 5;
 
 // Help manage multiple inputs using interrupts that are debounced.
 pub struct InputManager<'d, E: EspEventLoopType> {
@@ -123,7 +123,6 @@ pub struct Input<'d> {
     input: PinDriver<'d, AnyIOPin, MODE_Input>,
     pub pin: i32,
     pub dirty: bool,
-    states: [Level; SAMPLES],
     has_interrupts: bool,
     mode: InputMode,
 }
@@ -132,15 +131,13 @@ impl<'d> Input<'d> {
     // Generate a new input
     pub fn new(pin: AnyIOPin, mode: InputMode) -> Result<Self, EspError> {
         let mut input = PinDriver::input(pin)?;
-        input.set_pull(Pull::Up)?;
         let pin = input.pin();
-        let state = input.get_level();
+        input.set_pull(Pull::Up)?;
         Ok(Self {
-            state,
+            state: input.get_level(),
             input,
             pin,
-            dirty: true,
-            states: [state; SAMPLES],
+            dirty: false,
             has_interrupts: false,
             mode,
         })
@@ -151,20 +148,47 @@ impl<'d> Input<'d> {
     // Note: this function is required at present since polling is not supported (yet)
     pub fn with_interrupts(mut self, handler: &mut InterruptHandler) -> Result<Self, EspError> {
         self.has_interrupts = true;
+        // Setup the input pin
         self.input.set_interrupt_type(InterruptType::AnyEdge)?;
         unsafe { self.input.subscribe(handler.register(self.pin))? };
         self.input.enable_interrupt()?;
+
         Ok(self)
     }
 
     fn handle_interrupt(&mut self) -> Result<(), EspError> {
         if !self.has_interrupts {
             error!("Handling unregistered interrupt");
+            // TODO: should be an error
             return Ok(());
         }
         // if we have an interrupt, we need to check the state of the input
         self.dirty = true;
+        self.debounce();
         self.input.enable_interrupt()
+    }
+
+    // Debounce the input
+    //
+    // This function will debounce the input signal by ensuring that a signal has a constant level
+    // for at least `SAMPLES` length. This is achieved in a O(1) memory space by starting a count
+    // at `SAMPLES`, counting a HIGH as +1 and a LOW as -1. When the count reaches 0 or 2*SAMPLES,
+    // then the signal should be stable for at least `SAMPLES` count.
+    //
+    // Warning: This function will indefinitely block if the signal is never stable (e.g.
+    // floating). Ensure a pull-up or pull-down is set on the input
+    fn debounce(&mut self) {
+        let mut level = self.input.get_level();
+        let mut count = SAMPLES;
+        while count != 0 && count < SAMPLES * 2 {
+            count = if level == Level::High {
+                count.saturating_add(1)
+            } else {
+                count.saturating_sub(1)
+            };
+            level = self.input.get_level();
+        }
+        self.state = if count == 0 { Level::Low } else { Level::High };
     }
 
     // Evalute the state of the input, returning an input event if applicable.
@@ -181,28 +205,8 @@ impl<'d> Input<'d> {
             return None;
         }
 
-        // Add a new measurement
-        self.states.rotate_right(1);
-        self.states[0] = self.input.get_level();
-
-        // Count number of true's
-        let count = self
-            .states
-            .iter()
-            .fold(0, |acc, s| if s == &Level::High { acc + 1 } else { acc });
-
-        // If the slice is saturated (either direction), then it's now stable
-        if count == 0 || count == self.states.len() {
-            self.dirty = false;
-
-            // Check if the state has changed
-            let state = (count != 0).into();
-            if state != self.state {
-                self.state = state;
-                return Some(self.input_event());
-            }
-        }
-        None
+        self.dirty = false;
+        Some(self.input_event())
     }
 
     fn input_event(&self) -> InputEvent {
