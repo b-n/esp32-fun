@@ -131,10 +131,10 @@ impl<'d> Input<'d> {
         switch.set_pull(Pull::Up)?;
         let pin = switch.pin();
         Ok(Self {
-            state: Level::High,
+            state: switch.get_level(),
             switch,
             pin,
-            dirty: false,
+            dirty: true,
             states: [false; SAMPLES],
             has_interrupts: false,
             mode,
