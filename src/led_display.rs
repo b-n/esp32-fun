@@ -10,10 +10,19 @@ use ws2812_esp32_rmt_driver::{Ws2812Esp32Rmt, Ws2812Esp32RmtDriverError};
 
 use crate::events::Event;
 
+const FRAME_RATE: u32 = 60;
+
+const OSCILLATOR_SPACE: f64 = std::f64::consts::PI * 2.0;
+const OSCILLATOR_HZ: f64 = 0.2;
+const OSCILLATOR_STEP: f64 = OSCILLATOR_SPACE * OSCILLATOR_HZ / FRAME_RATE as f64;
+
 pub struct LedDisplay<'d> {
     driver: Ws2812Esp32Rmt<'d>,
     pixels: u8,
     hue: u8,
+    sat: u8,
+    val: u8,
+    frame: u32,
 }
 
 impl<'d> LedDisplay<'d> {
@@ -27,21 +36,34 @@ impl<'d> LedDisplay<'d> {
             driver,
             pixels,
             hue: 0,
+            sat: 255,
+            val: 16,
+            frame: 0,
         })
     }
 
+    pub fn oscillator_value(&self) -> f64 {
+        (self.frame as f64 * OSCILLATOR_STEP).sin()
+    }
+
+    pub fn set_hue(&mut self, hue: u8) {
+        self.hue = hue;
+    }
+
     pub fn render_frame(&mut self) {
-        let h = self.hue;
+        let oscillator = self.oscillator_value();
+        // wrapping_add_signed is limited to i8
+        // oscillator math should not return a value > +/- 127
+        let h = self.hue.wrapping_add_signed((16f64 * oscillator) as i8);
         let pixels = (0..self.pixels).map(|i| {
             hsv2rgb(Hsv {
-                hue: h.wrapping_add(i * 90),
-                sat: 255,
-                val: 8,
+                hue: h.wrapping_add(i * 64),
+                sat: self.sat,
+                val: self.val,
             })
         });
         self.driver.write(pixels).unwrap();
-
-        self.hue = self.hue.wrapping_add(1);
+        self.frame += 1;
     }
 }
 
