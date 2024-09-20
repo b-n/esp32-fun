@@ -3,20 +3,18 @@
 use core::pin::pin;
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
-    hal::{gpio::IOPin, peripherals::Peripherals, task::block_on},
+    hal::{delay, gpio::IOPin, peripherals::Peripherals, task::block_on},
     log::EspLogger,
     sys::{link_patches, EspError},
     timer::EspTaskTimerService,
 };
+use esp_inputs::{Event as InputEvent, InputManager};
 use log::info;
 use std::time::Duration;
 
 mod events;
-mod inputs;
-mod irq;
 mod led_display;
 
-use inputs::InputManager;
 use led_display::{frame_timer, LedDisplay};
 
 // static NETWORK_SSID: &'static str = env!("NETWORK_SSID");
@@ -35,24 +33,29 @@ fn main() -> Result<(), EspError> {
     let peripherals = Peripherals::take()?;
 
     // Setup input handlers
-    let mut inputs = InputManager::new().with_event_loop(sys_loop.clone());
-    inputs.new_switch(peripherals.pins.gpio1.downgrade(), true)?;
-    inputs.new_switch(peripherals.pins.gpio2.downgrade(), true)?;
-    inputs.new_switch(peripherals.pins.gpio3.downgrade(), true)?;
-    inputs.new_switch(peripherals.pins.gpio4.downgrade(), true)?;
+    let mut inputs = InputManager::new();
     inputs.new_switch(peripherals.pins.gpio5.downgrade(), true)?;
+    inputs.new_switch(peripherals.pins.gpio6.downgrade(), true)?;
+    inputs.new_switch(peripherals.pins.gpio7.downgrade(), true)?;
+    inputs.new_switch(peripherals.pins.gpio8.downgrade(), true)?;
     inputs.new_switch(peripherals.pins.gpio9.downgrade(), true)?;
     inputs.new_switch(peripherals.pins.gpio10.downgrade(), true)?;
+    inputs.new_switch(peripherals.pins.gpio20.downgrade(), true)?;
     inputs.new_switch(peripherals.pins.gpio21.downgrade(), true)?;
 
     // Check the inputs via a timer circuit
     let input_timer = {
         let timer_service = EspTaskTimerService::new()?;
+        let sys_loop = sys_loop.clone();
         timer_service.timer(move || {
-            inputs.eval();
+            for event in inputs.events() {
+                sys_loop
+                    .post::<events::Event>(&(event.into()), delay::BLOCK)
+                    .unwrap();
+            }
         })?
     };
-    input_timer.every(Duration::from_millis(8))?;
+    input_timer.every(Duration::from_millis(2))?;
 
     // Setup LED display
     let mut display = LedDisplay::new(peripherals.pins.gpio0, peripherals.rmt.channel0, 2).unwrap();
@@ -74,21 +77,9 @@ fn main() -> Result<(), EspError> {
                     display.render_frame();
                 }
                 events::Event::Input(e) => {
-                    let bit = match e {
-                        (1, _) => 0,
-                        (2, _) => 1,
-                        (3, _) => 2,
-                        (4, _) => 3,
-                        (21, _) => 4,
-                        (10, _) => 5,
-                        (9, _) => 6,
-                        (5, _) => 7,
-                        _ => 8, // overflows, but we don't care because it acts as a noop
-                    };
-
                     bits = match e {
-                        (_, inputs::InputEvent::On) => bits | (1 << bit),
-                        (_, inputs::InputEvent::Off) => bits & !(1 << bit),
+                        InputEvent::On(gpio) => bits | gpio_to_bit_mask(gpio),
+                        InputEvent::Off(gpio) => bits & !gpio_to_bit_mask(gpio),
                         _ => bits,
                     };
 
@@ -99,4 +90,18 @@ fn main() -> Result<(), EspError> {
             }
         }
     }))
+}
+
+fn gpio_to_bit_mask(gpio: i32) -> u8 {
+    1 << match gpio {
+        5 => 0,
+        6 => 1,
+        7 => 2,
+        8 => 3,
+        9 => 4,
+        10 => 5,
+        20 => 6,
+        21 => 7,
+        _ => 8, // overflows, but we don't care because it acts as a noop
+    }
 }

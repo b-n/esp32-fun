@@ -1,14 +1,15 @@
-use esp_idf_svc::eventloop::{EspEventLoop, EspEventLoopType};
 use esp_idf_svc::hal::{
-    delay,
     gpio::{AnyIOPin, Input as MODE_Input, InterruptType, Level, PinDriver, Pull},
     sys::EspError,
 };
 use log::{debug, error};
 use std::collections::HashMap;
 
-use crate::events::Event;
-use crate::irq::InterruptHandler;
+mod events;
+mod irq;
+
+pub use events::Event;
+use irq::InterruptHandler;
 
 // The number of samples to take when debouncing an input. When an input changes, an interrupt is
 // fired. That interrupt is then cleared and checked during the input loop. It is quite likely that
@@ -17,34 +18,18 @@ use crate::irq::InterruptHandler;
 const SAMPLES: usize = 5;
 
 // Help manage multiple inputs using interrupts that are debounced.
-pub struct InputManager<'d, E: EspEventLoopType> {
+pub struct InputManager<'d> {
     inputs: HashMap<i32, Input<'d>>,
     irq_handler: InterruptHandler<'d>,
-    event_loop: Option<EspEventLoop<E>>,
 }
 
-impl<'d, E> InputManager<'d, E>
-where
-    E: EspEventLoopType,
-{
+impl<'d> InputManager<'d> {
     // Generate a new input manager
-    //
-    // Note: see `with_event_loop` to connect the manager to an event loop
     pub fn new() -> Self {
         Self {
             inputs: HashMap::with_capacity(32),
             irq_handler: InterruptHandler::new(),
-            event_loop: None,
         }
-    }
-
-    // Connect the input manager to an event loop to publish input events
-    //
-    // Note: This function needs to be called since the only way to get events
-    // is via the usage of an event loop (at present).
-    pub fn with_event_loop(mut self, event_loop: EspEventLoop<E>) -> Self {
-        self.event_loop = Some(event_loop);
-        self
     }
 
     // Register an input with the input manager
@@ -77,7 +62,7 @@ where
     }
 
     // Evalute the state of all inputs
-    pub fn eval(&mut self) {
+    pub fn events(&mut self) -> Vec<Event> {
         let mut dequeued = 0;
         // Check the interrupt queue first and handle any messages
         while let Some(p) = self.irq_handler.dequeue() {
@@ -92,25 +77,15 @@ where
             debug!("Dequeued {} interrupts", dequeued);
         }
 
-        // For each input,
-        for (_, input) in self.inputs.iter_mut() {
-            let pin = input.pin;
-            // if there is an input event and an event loop, post the event to the loop
-            if let (Some(event), Some(event_loop)) = (input.tick(), &self.event_loop) {
-                event_loop
-                    .post::<Event>(&((pin, event).into()), delay::BLOCK)
-                    .unwrap();
-            }
-        }
+        self.inputs
+            .iter_mut()
+            .fold(Vec::with_capacity(8), |mut acc, (_, input)| {
+                if let Some(event) = input.tick() {
+                    acc.push(event);
+                }
+                acc
+            })
     }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum InputEvent {
-    On,
-    Off,
-    Pressed,
-    Released,
 }
 
 pub enum InputMode {
@@ -199,8 +174,8 @@ impl<'d> Input<'d> {
     //
     // Returns:
     // - None when nothing has changed
-    // - Some(InputEvent) based on the new state if it was changed
-    fn tick(&mut self) -> Option<InputEvent> {
+    // - Some(Event) based on the new state if it was changed
+    fn tick(&mut self) -> Option<Event> {
         if !self.dirty {
             return None;
         }
@@ -209,15 +184,16 @@ impl<'d> Input<'d> {
         Some(self.input_event())
     }
 
-    fn input_event(&self) -> InputEvent {
+    fn input_event(&self) -> Event {
+        let pin = self.pin;
         match self.mode {
             InputMode::Switch => match self.state {
-                Level::High => InputEvent::On,
-                Level::Low => InputEvent::Off,
+                Level::High => Event::On(pin),
+                Level::Low => Event::Off(pin),
             },
             InputMode::Button => match self.state {
-                Level::High => InputEvent::Pressed,
-                Level::Low => InputEvent::Released,
+                Level::High => Event::Pressed(pin),
+                Level::Low => Event::Released(pin),
             },
         }
     }

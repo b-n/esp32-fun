@@ -6,6 +6,17 @@ edition = "2021"
 resolver = "2"
 rust-version = "1.77"
 
+[workspace]
+members = [
+  "esp-inputs"
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+homepage = "https://github.com/b-n/espfun"
+repository = "https://github.com/b-n/espfun"
+
 [[bin]]
 name = "esptest"
 harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
@@ -35,6 +46,7 @@ smart-leds-trait = { version = "*" }
 smart-leds = { version = "0.4.0" }
 ws2812-esp32-rmt-driver = { version = "0.9.0", features = ["smart-leds-trait"] }
 heapless = { version = "0.7.8" }
+esp-inputs = { path = "esp-inputs"}
 
 [build-dependencies]
 embuild = "0.32.0"

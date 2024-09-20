@@ -1,14 +1,13 @@
 use esp_idf_svc::eventloop::{
     EspEvent, EspEventDeserializer, EspEventPostData, EspEventSerializer, EspEventSource,
 };
+use esp_inputs::Event as InputEvent;
 use std::ffi::CStr;
-
-use crate::inputs::InputEvent;
 
 #[derive(Clone, Copy)]
 pub enum Event {
     DisplayFrame,
-    Input((i32, InputEvent)),
+    Input(InputEvent),
 }
 
 unsafe impl EspEventSource for Event {
@@ -36,8 +35,8 @@ impl EspEventDeserializer for Event {
     }
 }
 
-impl From<(i32, InputEvent)> for Event {
-    fn from((pin, event): (i32, InputEvent)) -> Self {
-        Event::Input((pin, event))
+impl From<InputEvent> for Event {
+    fn from(event: InputEvent) -> Self {
+        Self::Input(event)
     }
 }
