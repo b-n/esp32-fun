@@ -83,7 +83,7 @@ fn main() -> Result<(), EspError> {
                         (10, _) => 5,
                         (9, _) => 6,
                         (5, _) => 7,
-                        _ => 0,
+                        _ => 8, // overflows, but we don't care because it acts as a noop
                     };
 
                     bits = match e {
